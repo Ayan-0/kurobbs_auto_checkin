@@ -142,9 +142,11 @@ class KurobbsClient:
     ):
         """Handle the common logic for sign-in actions."""
         resp = action_method()
-        if resp.success:
-            self.result[action_name] = success_message
-            logger.info("{} -> {}", action_name, success_message)
+        # code=200: success, code=1511: already signed in today (also success)
+        if resp.success or resp.code == 1511:
+            msg = success_message if resp.success else f"{success_message}（今日已签到）"
+            self.result[action_name] = msg
+            logger.info("{} -> {}", action_name, msg)
         else:
             self.exceptions.append(KurobbsClientException(f"{failure_message}, {resp.msg}"))
 
