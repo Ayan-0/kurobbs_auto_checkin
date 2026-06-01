@@ -1,5 +1,6 @@
 import os
 import sys
+import uuid
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 from zoneinfo import ZoneInfo
@@ -39,18 +40,21 @@ class KurobbsClient:
         self.session.headers.update(
             {
                 "osversion": "Android",
-                "devcode": "2fba3859fe9bfe9099f2696b8648c2c6",
-                "countrycode": "CN",
-                "ip": "10.0.2.233",
-                "model": "2211133C",
+                "devCode": "073A9EFAC18FC50616DD15808DAE719DBCB904B7",
+                "distinct_id": str(uuid.uuid4()),
+                "countryCode": "CN",
+                "ip": "192.168.102.138",
+                "model": "23127PN0CC",
                 "source": "android",
                 "lang": "zh-Hans",
-                "version": "1.0.9",
-                "versioncode": "1090",
+                "version": "2.2.0",
+                "versionCode": "2200",
+                "channelId": "2",
                 "token": self.token,
-                "content-type": "application/x-www-form-urlencoded; charset=utf-8",
+                "Cookie": f"user_token={self.token}",
+                "content-type": "application/x-www-form-urlencoded",
                 "accept-encoding": "gzip",
-                "user-agent": "okhttp/3.10.0",
+                "user-agent": "okhttp/3.11.0",
             }
         )
         self.result: Dict[str, str] = {}
