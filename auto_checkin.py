@@ -1,3 +1,5 @@
+import base64
+import json as json_lib
 import os
 import sys
 import uuid
@@ -40,21 +42,18 @@ class KurobbsClient:
         self.session.headers.update(
             {
                 "osversion": "Android",
-                "devCode": "073A9EFAC18FC50616DD15808DAE719DBCB904B7",
-                "distinct_id": str(uuid.uuid4()),
-                "countryCode": "CN",
-                "ip": "192.168.102.138",
-                "model": "23127PN0CC",
+                "devcode": "2fba3859fe9bfe9099f2696b8648c2c6",
+                "countrycode": "CN",
+                "ip": "10.0.2.233",
+                "model": "2211133C",
                 "source": "android",
                 "lang": "zh-Hans",
-                "version": "2.2.0",
-                "versionCode": "2200",
-                "channelId": "2",
+                "version": "1.0.9",
+                "versioncode": "1090",
                 "token": self.token,
-                "Cookie": f"user_token={self.token}",
-                "content-type": "application/x-www-form-urlencoded",
+                "content-type": "application/x-www-form-urlencoded; charset=utf-8",
                 "accept-encoding": "gzip",
-                "user-agent": "okhttp/3.11.0",
+                "user-agent": "okhttp/3.10.0",
             }
         )
         self.result: Dict[str, str] = {}
@@ -89,6 +88,17 @@ class KurobbsClient:
             raise KurobbsClientException("User info is missing in response.")
         return res.data
 
+    def get_user_id_from_token(self) -> int:
+        """Extract userId from JWT token payload."""
+        try:
+            payload_b64 = self.token.split(".")[1]
+            # Add padding
+            payload_b64 += "=" * (4 - len(payload_b64) % 4)
+            payload = json_lib.loads(base64.urlsafe_b64decode(payload_b64))
+            return int(payload.get("userId", 0))
+        except Exception:
+            raise KurobbsClientException("Failed to extract userId from token.")
+
     def get_user_game_list(self, user_id: int) -> Dict[str, Any]:
         """Get the list of games for the user."""
         res = self._post(self.FIND_ROLE_LIST_API_URL, {"queryUserId": user_id})
@@ -97,9 +107,10 @@ class KurobbsClient:
         return res.data
 
     def checkin(self) -> Response:
-        """Perform the check-in operation."""
-        mine_info = self.get_mine_info()
-        user_game_list = self.get_user_game_list(user_id=mine_info.get("mine", {}).get("userId", 0))
+        """Perform the check-in operation (游戏奖励签到)."""
+        # Extract userId from JWT instead of calling mineV2 (which often fails with 220)
+        user_id = self.get_user_id_from_token()
+        user_game_list = self.get_user_game_list(user_id=user_id)
 
         beijing_tz = ZoneInfo("Asia/Shanghai")
         beijing_time = datetime.now(beijing_tz)
