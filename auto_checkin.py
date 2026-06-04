@@ -58,6 +58,7 @@ class KurobbsClient:
         )
         self.result: Dict[str, str] = {}
         self.exceptions: List[Exception] = []
+        self._role_list_cache: Optional[List[Dict[str, Any]]] = None
 
     def _post(self, url: str, data: Dict[str, Any]) -> Response:
         """Make a POST request to the specified URL with the given data."""
@@ -73,11 +74,12 @@ class KurobbsClient:
             raise KurobbsClientException(f"Failed to parse response from {url}") from exc
 
         logger.debug(
-            "POST {} -> code={}, success={}, msg={}",
+            "POST {} -> code={}, success={}, msg={}, data={}",
             url,
             res.code,
             res.success,
             res.msg,
+            res.data,
         )
         return res
 
@@ -106,19 +108,26 @@ class KurobbsClient:
             raise KurobbsClientException("User game list is missing in response.")
         return res.data
 
-    def checkin(self) -> Response:
-        """Perform the check-in operation (游戏奖励签到)."""
-        # Extract userId from JWT instead of calling mineV2 (which often fails with 220)
+    def _get_all_roles(self) -> List[Dict[str, Any]]:
+        """Get all roles for the user (cached)."""
+        if self._role_list_cache is not None:
+            return self._role_list_cache
         user_id = self.get_user_id_from_token()
         user_game_list = self.get_user_game_list(user_id=user_id)
-
-        beijing_tz = ZoneInfo("Asia/Shanghai")
-        beijing_time = datetime.now(beijing_tz)
-
         role_list = user_game_list.get("defaultRoleList") or []
         if not role_list:
             raise KurobbsClientException("No default role found for the user.")
-        role_info = role_list[0]
+        self._role_list_cache = role_list
+        return role_list
+
+    def _get_game_ids(self, role_list: List[Dict[str, Any]]) -> set:
+        """Get unique game IDs from role list."""
+        return {role.get("gameId", 2) for role in role_list}
+
+    def checkin_for_role(self, role_info: Dict[str, Any]) -> Response:
+        """Perform the game reward check-in for a specific role."""
+        beijing_tz = ZoneInfo("Asia/Shanghai")
+        beijing_time = datetime.now(beijing_tz)
 
         data = {
             "gameId": role_info.get("gameId", 2),
@@ -129,34 +138,71 @@ class KurobbsClient:
         }
         return self._post(self.SIGN_URL, data)
 
-    def sign_in(self) -> Response:
-        """Perform the sign-in operation."""
-        return self._post(self.USER_SIGN_URL, {"gameId": 2})
+    def checkin(self) -> List[Response]:
+        """Perform the check-in operation for all roles (游戏奖励签到)."""
+        role_list = self._get_all_roles()
+        responses = []
+        for role_info in role_list:
+            game_name = "鸣潮" if role_info.get("gameId") == 3 else f"战双(gameId={role_info.get('gameId')})"
+            logger.info("签到角色: {} (roleId={})", game_name, role_info.get("roleId"))
+            resp = self.checkin_for_role(role_info)
+            responses.append(resp)
+        return responses
+
+    def sign_in(self) -> List[Response]:
+        """Perform the sign-in operation for all games."""
+        role_list = self._get_all_roles()
+        game_ids = self._get_game_ids(role_list)
+        responses = []
+        for game_id in game_ids:
+            game_name = "鸣潮" if game_id == 3 else f"战双(gameId={game_id})"
+            logger.info("社区签到: {}", game_name)
+            resp = self._post(self.USER_SIGN_URL, {"gameId": game_id})
+            responses.append(resp)
+        return responses
 
     def _process_sign_action(
         self,
         action_name: str,
-        action_method: Callable[[], Response],
+        action_method: Callable[[], List[Response]],
         success_message: str,
         failure_message: str,
     ):
-        """Handle the common logic for sign-in actions."""
-        resp = action_method()
-        # code=200: success, code=1511: already signed in today (also success)
-        if resp.success or resp.code == 1511:
-            msg = success_message if resp.success else f"{success_message}（今日已签到）"
-            self.result[action_name] = msg
-            logger.info("{} -> {}", action_name, msg)
-        else:
-            self.exceptions.append(KurobbsClientException(f"{failure_message}, {resp.msg}"))
+        """Handle the common logic for sign-in actions (supports multi-role)."""
+        responses = action_method()
+        success_count = 0
+        already_count = 0
+        fail_count = 0
+        for resp in responses:
+            if resp.success:
+                success_count += 1
+            elif resp.code == 1511:
+                already_count += 1
+            else:
+                fail_count += 1
+                logger.warning("{} 失败 (code={}): {}", failure_message, resp.code, resp.msg)
+
+        parts = []
+        if success_count > 0:
+            parts.append(f"{success_count}个成功")
+        if already_count > 0:
+            parts.append(f"{already_count}个今日已签到")
+        if fail_count > 0:
+            parts.append(f"{fail_count}个失败")
+        status = ", ".join(parts) if parts else ""
+        if status and (success_count > 0 or already_count > 0):
+            self.result[action_name] = f"{success_message}（{status}）"
+            logger.info("{} -> {}", action_name, status)
+        elif fail_count > 0 and success_count == 0 and already_count == 0:
+            self.exceptions.append(KurobbsClientException(f"{failure_message}: 全部失败"))
 
     def start(self):
-        """Start the sign-in process."""
+        """Start the sign-in process for all roles and games."""
         self._process_sign_action(
             action_name="checkin",
             action_method=self.checkin,
-            success_message="签到奖励签到成功",
-            failure_message="签到奖励签到失败",
+            success_message="游戏奖励签到成功",
+            failure_message="游戏奖励签到失败",
         )
 
         self._process_sign_action(
